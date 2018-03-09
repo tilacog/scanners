@@ -1,70 +1,38 @@
 from collections import namedtuple
 import re
 
-"""
-sections
-========
-a - gfip-file
-b - gfip header  -- wont repeat within a
-c - worker data  -- repeats within b
-
-* a and b could be merged into a single section
-
-
-fields to import:
-=================
-  - [a] CNPJ
-  - [a] Competência
-
-  - [b] CNAE
-  - [b] RAT
-  - [b] FAP
-  - [b] RAT Ajustado
-
-  - [c] Colaborador
-  - [c] CBO
-  - [c] PIS
-  - [c] Admissão
-  - [c] Categoria
-  - [c] Base calculo INSS
-  - [c] Base INSS 13°
-
-how it works
-============
-struct FileData {
-  turn_on_regex
-  turn_off_regex
-  // ..fields
-}
-
-/// worker data
-struct Section {
-    trigger_on_regex
-    trigger_off_regex
-    fields_to_catch: Vec<(Field, Option<Value>)>
-    &FileData
-}
-
-struct Field {
-    name
-    regex
-}
-
-
-by the end of each worker section:
-- verify that all fields were captured (have values), including file_data
-- serialize section (print to stdout as csv)
-- discard and create a new (idling) section
-
-by the end of each file data:
-- assert that there are no pending worker sections
--
-"""
-
 # data containers
+Field = namedtuple('Field', 'name regex')
 Header = namedtuple('Header', ('cnpj competência colaborador cbo pis '
                                'admissao categoria base_inss base_inss_13'))
-Field = namedtuple('Field', 'name regex')
+
+allowed_to_be_empty = (
+    'data_adm',  # autonomous workers don't have admission date
+)
+
+
+month_names = {
+    'Janeiro': 1,
+    'Fevereiro': 2,
+    'Março': 3,
+    'Abril': 4,
+    'Maio': 5,
+    'Junho': 6,
+    'Julho': 7,
+    'Agosto': 8,
+    'Setembro': 9,
+    'Outubro': 10,
+    'Novembro': 11,
+    'Dezembro': 12,
+    '13° mês': 13,
+}
+
+
+def fix_date(dictionary):
+    month, year = dictionary.pop('competencia').split(' de ')
+    dictionary['mes'] = month_names[month]
+    dictionary['ano'] = int(year)
+    return dictionary
 
 
 def catch_field(field, text):
@@ -87,24 +55,32 @@ class SectionWatcher():
                 catch = catch_field(field, line)
                 if catch:
                     (field_name, catched_value) = catch
-                    self.fields[field_name] = catch
+                    catched = catched_value.strip()
+                    if not catched and field_name not in allowed_to_be_empty:
+                        raise RuntimeError("Empty field")
+                    self.fields[field_name] = catched
 
     def update_status(self, line):
+        # Turn off and flush
         if self.is_active and self.off_regex.search(line):
             self.is_active = False
-            results = self.flush()
-            print(results)  # DEBUG
+            return self.flush()
 
-            return False
+        # Turn on
         if not self.is_active and self.on_regex.search(line):
             self.is_active = True
-            return True
 
     def flush(self):
-        for required_field in self.fields_to_catch:
-            if required_field.name not in self.fields:
-                msg = "Flushed without catching all required fields"
-                raise RuntimeError(msg)
+        # handle missing fields
+        missing = [f.name for f in self.fields_to_catch
+                   if f.name not in self.fields]
+        if len(missing) > 1:
+            msg = "Flushed without catching all required fields: {missing}"
+            raise RuntimeError(msg)
+        elif missing:
+            key, = missing
+            self.fields[key] = '#[missing]'
+
         fields = self.fields
         self.fields = dict()
         self.active = False
@@ -123,35 +99,61 @@ HEADER_FIELDS_TO_CATCH = (
 )
 
 
-WORKER_ON_REGEX = re.compile(r'')
-WORKER_OFF_REGEX = re.compile(r'')
+WORKER_ON_REGEX = re.compile(r'^(?:\d+\.?){3} - Trabalhador\s+[\d.-]+\s[A-Z ]+$')
+WORKER_OFF_REGEX = re.compile(r'Movimentações do Trabalhador')
 WORKER_FIELDS_TO_CATCH = (
-    Field('colaborador' , re.compile(r'Nome do Trabalhador\s+(.*)')),
-    Field('cbo'         , re.compile(r'Classificação Brasileira de Ocupações (CBO)\s+(\d+)')),
+    Field('section'     , re.compile(r'^(\d+\.3\.\d+)\s')),
+    Field('colaborador' , re.compile(r'Trabalhador.*?([A-Z][A-Z ]+)')),
+    Field('cbo'         , re.compile(r'Classificação Brasileira de Ocupações \(CBO\)\s+(\d+)')),
     Field('pis'         , re.compile(r'NIT do Trabalhador\s+(\d.*)')),
-    Field('data_adm'    , re.compile(r'Dia Admissão\s+(\d\d.*)')),
+    Field('data_adm'    , re.compile(r'Dia Admissão\s+(.*)')),
     Field('categoria'   , re.compile(r'Código da Categoria\s+(\d+)')),
-    Field('bc_inss'     , re.compile(r'')),
-    Field('bc_inss_13'  , re.compile(r'')),
+    Field('bc_inss'     , re.compile(r'Valor base de cálculo mensal\s+(\d.*)')),
+    Field('bc_inss_13'  , re.compile(r'Valor base de cálculo 13º\s+(\d.*)')),
 )
 
 
-def main(filepath):
+def scan(filepath):
     HeaderSectionWatcher = SectionWatcher(
         on_regex=HEADER_ON_REGEX,
         off_regex=HEADER_OFF_REGEX,
         fields_to_catch=HEADER_FIELDS_TO_CATCH,
     )
+    WorkerSectionWatcher = SectionWatcher(
+        on_regex=WORKER_ON_REGEX,
+        off_regex=WORKER_OFF_REGEX,
+        fields_to_catch=WORKER_FIELDS_TO_CATCH,
+    )
 
-    hsw = HeaderSectionWatcher  # alias
+    # aliases
+    hsw = HeaderSectionWatcher
+    wsw = WorkerSectionWatcher
+
+    last_header = None
 
     with open(filepath) as input_file:
-        for line in input_file:
-            hsw.update_status(line)
+        for _idx, line in enumerate(input_file, start=1):
+            header_result = hsw.update_status(line)
+            worker_result = wsw.update_status(line)
+
             hsw.consume(line)
+            wsw.consume(line)
+
+            if worker_result:
+                assert last_header is not None
+                yield({**worker_result, **last_header})
+            if header_result:
+                last_header = fix_date(header_result)
 
 
 if __name__ == '__main__':
     import sys
+    import csv
+
     filepath = sys.argv[1]
-    main(filepath)
+    headers = ('ano mes cnpj cnae rat fap rat_ajustado colaborador pis '
+               'cbo categoria data_adm bc_inss bc_inss_13 section').split()
+    writer = csv.DictWriter(sys.stdout, headers)
+    writer.writeheader()
+    for record in scan(filepath):
+        writer.writerow(record)
