@@ -16,12 +16,12 @@ fields to import:
   - [a] CNPJ
   - [a] Competência
 
-  - [b] Colaborador
   - [b] CNAE
   - [b] RAT
   - [b] FAP
   - [b] RAT Ajustado
 
+  - [c] Colaborador
   - [c] CBO
   - [c] PIS
   - [c] Admissão
@@ -93,7 +93,7 @@ class SectionWatcher():
         if self.is_active and self.off_regex.search(line):
             self.is_active = False
             results = self.flush()
-            print(results)
+            print(results)  # DEBUG
 
             return False
         if not self.is_active and self.on_regex.search(line):
@@ -120,6 +120,19 @@ HEADER_FIELDS_TO_CATCH = (
     Field("fap"          , re.compile(r'FAP\s+(\d+,\d+)')),
     Field("rat"          , re.compile(r'RAT: Alíquota\s+(\d+,\d+)')),
     Field("rat_ajustado" , re.compile(r'RAT: Ajustado\s+(\d+,\d+)')),
+)
+
+
+WORKER_ON_REGEX = re.compile(r'')
+WORKER_OFF_REGEX = re.compile(r'')
+WORKER_FIELDS_TO_CATCH = (
+    Field('colaborador' , re.compile(r'Nome do Trabalhador\s+(.*)')),
+    Field('cbo'         , re.compile(r'Classificação Brasileira de Ocupações (CBO)\s+(\d+)')),
+    Field('pis'         , re.compile(r'NIT do Trabalhador\s+(\d.*)')),
+    Field('data_adm'    , re.compile(r'Dia Admissão\s+(\d\d.*)')),
+    Field('categoria'   , re.compile(r'Código da Categoria\s+(\d+)')),
+    Field('bc_inss'     , re.compile(r'')),
+    Field('bc_inss_13'  , re.compile(r'')),
 )
 
 
