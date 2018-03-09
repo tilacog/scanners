@@ -116,8 +116,8 @@ HEADER_OFF_REGEX = re.compile(r'Totais da GFIP')
 HEADER_FIELDS_TO_CATCH = (
     Field("cnae"         , re.compile(r'Código CNAE Preponderante\s+(\d+)')),
     Field("cnpj"         , re.compile(r'CNPJ/CEI do Estabelecimento\s+(\d+.*)')),
-    Field("competencia"  , re.compile(r'Mês\d(\w+) de (\d{4})')),
-    Field("fap"          , re.compile(r'FAP\s(\d+,\d+)')),
+    Field("competencia"  , re.compile(r'Mês\s+((?:\w+|13° mês) de \d{4})')),
+    Field("fap"          , re.compile(r'FAP\s+(\d+,\d+)')),
     Field("rat"          , re.compile(r'RAT: Alíquota\s+(\d+,\d+)')),
     Field("rat_ajustado" , re.compile(r'RAT: Ajustado\s+(\d+,\d+)')),
 )
